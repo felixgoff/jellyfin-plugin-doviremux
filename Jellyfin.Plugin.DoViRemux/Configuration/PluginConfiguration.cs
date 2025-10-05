@@ -15,13 +15,10 @@ public class PluginConfiguration : BasePluginConfiguration
     /// A user to reference when determining if an item or its remux have been watched,
     /// to skip remuxing or delete the remux, respectively
     /// </summary>
-    public string PrimaryUser { get; set; } = string.Empty;
-
-    public bool DownmuxProfile7 { get; set; } = false;
 
     public string PathToDoviTool { get; set; } = string.Empty;
 
-    public string PathToMP4Box { get; set; } = string.Empty;
+    public string PathTomkvmerge { get; set; } = string.Empty;
 
     /// <summary>
     /// Parsed form of IncludeAncestorIds

@@ -7,7 +7,7 @@ namespace Jellyfin.Plugin.DoViRemux;
 
 public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
-    public static Guid OurGuid = Guid.Parse("2f215b63-1a73-4193-9102-78f84d027014");
+    public static Guid OurGuid = Guid.Parse("b3f8e7a4-9c5d-4f2b-8a6e-1d3c9f7a2e4f");
     public override string Name => "DoVi Remux";
     public override Guid Id => OurGuid;
 

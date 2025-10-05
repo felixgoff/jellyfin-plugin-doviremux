@@ -9,7 +9,6 @@ public class Registrations : IPluginServiceRegistrator
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
         serviceCollection.AddTransient<RemuxLibraryTask>();
-        serviceCollection.AddTransient<CleanRemuxesTask>();
         serviceCollection.AddTransient<DownmuxWorkflow>();
     }
 }
