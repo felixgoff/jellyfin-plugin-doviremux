@@ -37,41 +37,65 @@ public class RemuxLibraryTask(IItemRepository _itemRepo,
 
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
-        var configuration = (_pluginManager.GetPlugin(Plugin.OurGuid)?.Instance as Plugin)?.Configuration
-            ?? throw new Exception("Can't get plugin configuration");
+        _logger.LogInformation("RemuxLibraryTask started.");
 
-        var itemsToProcess = _itemRepo.GetItems(new InternalItemsQuery
+        try
         {
-            MediaTypes = [MediaType.Video],
-            AncestorIds = configuration.IncludeAncestors
-        })
-            .Items
-            .Cast<Video>() // has some additional properties (that I don't remember if we use or not)
-            .Where(i => !cancellationToken.IsCancellationRequested && ShouldProcessItem(i))
-            .ToList();
+            var configuration = (_pluginManager.GetPlugin(Plugin.OurGuid)?.Instance as Plugin)?.Configuration
+                ?? throw new Exception("Can't get plugin configuration");
 
-        var i = 0.0;
-        foreach (var item in itemsToProcess)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
+            var itemsToProcess = _itemRepo.GetItems(new InternalItemsQuery
+            {
+                MediaTypes = [MediaType.Video],
+                AncestorIds = configuration.IncludeAncestors
+            })
+                .Items
+                .Cast<Video>()
+                .Where(i => !cancellationToken.IsCancellationRequested && ShouldProcessItem(i))
+                .ToList();
 
-            try
+            if (itemsToProcess.Count == 0)
             {
-                await ProcessOneItem(item, cancellationToken, configuration);
-            }
-            catch (Exception x)
-            {
-                _logger.LogWarning(x, "Failed to process {ItemId}", item.Id);
+                _logger.LogInformation("No items found to process.");
             }
 
-            progress.Report(++i / itemsToProcess.Count * 100);
+            var i = 0.0;
+            foreach (var item in itemsToProcess)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                try
+                {
+                    await ProcessOneItem(item, cancellationToken, configuration);
+                    _logger.LogInformation("Processed {ItemId}", item.Id);
+                }
+                catch (Exception x)
+                {
+                    _logger.LogWarning(x, "Failed to process {ItemId}", item.Id);
+                }
+
+                progress.Report(++i / itemsToProcess.Count * 100);
+            }
+
+            if (itemsToProcess.Count > 0)
+            {
+                _libraryManager.QueueLibraryScan();
+            }
+
+            _logger.LogInformation("RemuxLibraryTask finished.");
         }
-
-        if (itemsToProcess.Count > 0)
+        catch (OperationCanceledException)
         {
-            _libraryManager.QueueLibraryScan();
+            _logger.LogWarning("RemuxLibraryTask was cancelled.");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "RemuxLibraryTask failed with an unhandled exception.");
+            throw;
         }
     }
+
 
     private bool ShouldProcessItem(Video item)
     {
