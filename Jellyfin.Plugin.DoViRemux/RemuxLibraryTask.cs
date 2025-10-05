@@ -52,7 +52,14 @@ public class RemuxLibraryTask(IItemRepository _itemRepo,
             })
                 .Items
                 .Cast<Video>()
-                .Where(i => !cancellationToken.IsCancellationRequested && ShouldProcessItem(i))
+                .Where(i =>
+                {
+                    if (cancellationToken.IsCancellationRequested) return false;
+                    var streams = _sourceManager.GetMediaStreams(i.Id);
+                    var doviStream = streams.FirstOrDefault(s => s.Type == MediaBrowser.Model.Entities.MediaStreamType.Video && s.DvProfile.HasValue);
+                    // Only include videos that are DV8 (for either remux or HDR10 fallback)
+                    return doviStream?.DvProfile == 8;
+                })
                 .ToList();
 
             if (itemsToProcess.Count == 0)

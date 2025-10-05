@@ -8,6 +8,14 @@
         "category": "General",
         "versions": [
             {
+                "version": "1.2.1",
+                "changelog":"- Added support for Dolby Vision 8.1 to 7.6 remuxing\n- Improved logging for remux processes\n- Fixed an issue where some files were not detected as remuxable\n",
+                "targetAbi": "10.10.7.0",
+                "sourceUrl": "https://github.com/felixgoff/jellyfin-plugin-doviremux/releases/download/1.2.1/Jellyfin.Plugin.DoViRemux-1.2.1.zip",
+                "checksum": "f75e9d0175786e0603276999ce679813",
+                "timestamp": "2025-10-05T22:00:00"
+            },
+            {
                 "version": "1.2.0",
                 "changelog":"- Added support for Dolby Vision 8.1 to 7.6 remuxing\n- Improved logging for remux processes\n- Fixed an issue where some files were not detected as remuxable\n",
                 "targetAbi": "10.10.7.0",
