@@ -22,6 +22,7 @@ public class RemuxLibraryTask(IItemRepository _itemRepo,
                               ILibraryManager _libraryManager,
                               IUserDataManager _userDataManager,
                               IUserManager _userManager,
+                              IMediaEncoder _mediaEncoder,
                               DownmuxWorkflow _downmuxWorkflow)
     : IScheduledTask
 {
@@ -66,8 +67,27 @@ public class RemuxLibraryTask(IItemRepository _itemRepo,
 
                 try
                 {
-                    await ProcessOneItem(item, cancellationToken, configuration);
-                    _logger.LogInformation("Processed {ItemId}", item.Id);
+                    if (ShouldProcessItem(item))
+                    {
+                        await ProcessOneItem(item, cancellationToken, configuration);
+                        _logger.LogInformation("Processed {ItemId}", item.Id);
+                    }
+                    else
+                    {
+                        // Fallback: If DV8 but not remuxable, try HDR10 conversion
+                        var streams = _sourceManager.GetMediaStreams(item.Id);
+                        var doviStream = streams.FirstOrDefault(s => s.Type == MediaBrowser.Model.Entities.MediaStreamType.Video && s.DvProfile.HasValue);
+                        if (doviStream?.DvProfile == 8)
+                        {
+                            _logger.LogInformation("Attempting DV8 to HDR10 conversion for {ItemId}", item.Id);
+                            await ConvertDv8ToHdr10(item, configuration, cancellationToken);
+                            _logger.LogInformation("DV8 to HDR10 conversion complete for {ItemId}", item.Id);
+                        }
+                        else
+                        {
+                            _logger.LogInformation("Skipping {ItemId}: Not eligible for remux or HDR10 conversion.", item.Id);
+                        }
+                    }
                 }
                 catch (Exception x)
                 {
@@ -101,7 +121,6 @@ public class RemuxLibraryTask(IItemRepository _itemRepo,
     {
         if (item.Container != "mkv") return false;
 
-
         var streams = _sourceManager.GetMediaStreams(item.Id);
         var doviStream = streams.FirstOrDefault(s => s.Type == MediaBrowser.Model.Entities.MediaStreamType.Video
                                              && s.DvProfile.HasValue);
@@ -112,8 +131,11 @@ public class RemuxLibraryTask(IItemRepository _itemRepo,
         //
         // Jellyfin itself will likely not be happy with profile 5, since there's no HDR10 fallback, so things
         // like trickplay/thumbnail images (or even the entire video) may show up as the silly purple-and-green versions.
+
         if (doviStream?.DvProfile is null) return false;
+        if (doviStream.DvBlSignalCompatibilityId != 1) return false;
         if (doviStream.DvProfile != 8) return false;
+        if (doviStream.BlPresentFlag != 1 )return false;
         return true;
     }
 
@@ -162,5 +184,48 @@ public class RemuxLibraryTask(IItemRepository _itemRepo,
 
         // Cleanup
         File.Delete(downmuxedVideoPath);
+    }
+
+    private async Task ConvertDv8ToHdr10(Video item, PluginConfiguration configuration, CancellationToken cancellationToken)
+    {
+        var source = item.GetMediaSources(true).First(s => s.Container == "mkv");
+        var inputPath = source.Path;
+        var tempOutputPath = Path.Combine(_paths.TempDirectory, Path.GetFileNameWithoutExtension(inputPath) + "_hdr10.mp4");
+
+        // ffmpeg command adapted from your Python example
+        var ffmpegArgs = $"-nostdin -loglevel error -stats -y -i \"{inputPath}\" " +
+            "-vf \"hwupload,libplacebo=peak_detect=false:colorspace=9:color_primaries=9:color_trc=16:range=tv:format=yuv420p10le,hwdownload,format=yuv420p10le\" " +
+            "-c:v libx265 -map_chapters -1 -an -sn -b:v 12000k " +
+            "-x265-params \"repeat-headers=1:sar=1:hrd=1:aud=1:open-gop=0:hdr10=1:sao=0:rect=0:cutree=0:deblock=-3-3:strong-intra-smoothing=0:chromaloc=2:aq-mode=1:vbv-maxrate=160000:vbv-bufsize=160000:max-luma=1023:max-cll=0,0:master-display=G(8500,39850)B(6550,23000)R(35400,15650)WP(15635,16450)L(10000000,1)WP(15635,16450)L(1000000,100%):preset=slow\" " +
+            $"\"{tempOutputPath}\"";
+
+        var process = new System.Diagnostics.Process
+        {
+            StartInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = _mediaEncoder.EncoderPath, // Make sure this is set in your config
+                Arguments = ffmpegArgs,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+
+        _logger.LogInformation("Converting DV8 to HDR10: {Command} {Arguments}", process.StartInfo.FileName, process.StartInfo.Arguments);
+
+        process.Start();
+        string stdOut = await process.StandardOutput.ReadToEndAsync();
+        string stdErr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync(cancellationToken);
+
+        if (process.ExitCode != 0)
+        {
+            _logger.LogError("ffmpeg HDR10 conversion failed: {Error}", stdErr);
+            throw new Exception("ffmpeg HDR10 conversion failed: " + stdErr);
+        }
+
+        // Replace original file
+        File.Move(tempOutputPath, inputPath, overwrite: true);
     }
 }
