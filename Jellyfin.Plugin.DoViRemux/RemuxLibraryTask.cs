@@ -137,7 +137,7 @@ public class RemuxLibraryTask(IItemRepository _itemRepo,
         {
             StartInfo = new System.Diagnostics.ProcessStartInfo
             {
-                FileName = "mkvmerge",
+                FileName = configuration.PathTomkvmerge,
                 Arguments = mkvmergeArgs,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
