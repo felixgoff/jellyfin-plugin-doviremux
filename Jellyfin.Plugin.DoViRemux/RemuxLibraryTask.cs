@@ -195,13 +195,18 @@ public class RemuxLibraryTask(IItemRepository _itemRepo,
 
     private async Task ConvertDv8ToHdr10(Video item, PluginConfiguration configuration, CancellationToken cancellationToken)
     {
-        var source = item.GetMediaSources(true).First(s => s.Container == "mkv");
+        var source = item.GetMediaSources(true).FirstOrDefault(s => s.Container == "mkv");
+        if (source == null)
+        {
+            _logger.LogWarning("No MKV media source found for item {ItemId}", item.Id);
+            return;
+        }
         var inputPath = source.Path;
         var tempOutputPath = Path.Combine(_paths.TempDirectory, Path.GetFileNameWithoutExtension(inputPath) + "_hdr10.mp4");
 
-        // ffmpeg command adapted from your Python example
+        // Use zscale for HDR10 conversion (compatible with ffmpeg-jellyfin)
         var ffmpegArgs = $"-nostdin -loglevel error -stats -y -i \"{inputPath}\" " +
-            "-vf \"hwupload,libplacebo=peak_detect=false:colorspace=9:color_primaries=9:color_trc=16:range=tv:format=yuv420p10le,hwdownload,format=yuv420p10le\" " +
+            "-vf \"zscale=transfer=bt2020-10:primaries=bt2020:matrix=bt2020nc,format=yuv420p10le\" " +
             "-c:v libx265 -map_chapters -1 -an -sn -b:v 12000k " +
             "-x265-params \"repeat-headers=1:sar=1:hrd=1:aud=1:open-gop=0:hdr10=1:sao=0:rect=0:cutree=0:deblock=-3-3:strong-intra-smoothing=0:chromaloc=2:aq-mode=1:vbv-maxrate=160000:vbv-bufsize=160000:max-luma=1023:max-cll=0,0:master-display=G(8500,39850)B(6550,23000)R(35400,15650)WP(15635,16450)L(10000000,1)WP(15635,16450)L(1000000,100%):preset=slow\" " +
             $"\"{tempOutputPath}\"";
@@ -210,7 +215,7 @@ public class RemuxLibraryTask(IItemRepository _itemRepo,
         {
             StartInfo = new System.Diagnostics.ProcessStartInfo
             {
-                FileName = _mediaEncoder.EncoderPath, // Make sure this is set in your config
+                FileName = _mediaEncoder.EncoderPath,
                 Arguments = ffmpegArgs,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
