@@ -35,7 +35,7 @@ public class DownmuxWorkflow(IPluginManager _pluginManager,
         {
             StartInfo = new ProcessStartInfo(_mediaEncoder.EncoderPath)
             {
-                Arguments = $"-i \"{mediaSource.Path}\" -c:v copy -bsf:v hevc_mp4toannexb -f hevc \"{doviToolOutputPath}\"",
+                Arguments = $"-i \"{mediaSource.Path}\" -c:v copy -bsf:v hevc_mp4toannexb -f hevc -",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -50,7 +50,7 @@ public class DownmuxWorkflow(IPluginManager _pluginManager,
         {
             StartInfo = new ProcessStartInfo(configuration.PathToDoviTool)
             {
-                Arguments = "-m 1 convert --discard -",
+                Arguments = $"-m 1 convert --discard - -o \"{doviToolOutputPath}\"", // <-- use $ for interpolation
                 RedirectStandardInput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
