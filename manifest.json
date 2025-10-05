@@ -8,6 +8,14 @@
         "category": "General",
         "versions": [
             {
+                "version": "1.0.2",
+                "changelog":"- Added support for remuxing Dolby Vision 7.6 metadata to Dolby Vision 8.1\n- Improved logging for remux processes\n- Fixed an issue where some files were not detected as remuxable\n",
+                "targetAbi": "10.10.7.0",
+                "sourceUrl": "https://github.com/felixgoff/jellyfin-plugin-doviremux/releases/download/1.0.2/Jellyfin.Plugin.DoViRemux-1.0.2.zip",
+                "checksum": "cbce57a360c8fdc63e8934ef16148674",
+                "timestamp": "2025-10-05T15:50:00"
+            },
+            {
                 "version": "1.0.1",
                 "changelog":"- Fixed an error on task start when no primary user is set\n- Fixed remuxes crashing when the media has external subtitles\n- Fixed configuration changes requiring a restart to take effect\n- Improved logging for the 7.6 to 8.1 downmux processes\n- Fixed a deadlock between ffmpeg and dovi_tool during downmuxes\n- 7.6 downmuxing is no longer enabled by default after initial plugin installation",
                 "targetAbi": "10.10.7.0",
