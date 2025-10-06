@@ -8,6 +8,14 @@
         "category": "General",
         "versions": [
             {
+                "version": "1.3.0",
+                "changelog":"- Revamped DV to HDR10+ remuxing process to improve compatibility and success rate\n- Improved logging for remux processes\n- Fixed an issue where some files were not detected as remuxable\n",
+                "targetAbi": "10.10.7.0",
+                "sourceUrl": "https://github.com/felixgoff/jellyfin-plugin-doviremux/releases/download/1.3.0/Jellyfin.Plugin.DoViRemux-1.3.0.zip",
+                "checksum": "12fddb85bfff410cbc924e10fda1db99",
+                "timestamp": "2025-10-06T16:30:00"
+            },
+            {
                 "version": "1.2.2",
                 "changelog":"- Fixed an issue where some files were not detected as remuxable\n",
                 "targetAbi": "10.10.7.0",

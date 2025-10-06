@@ -10,6 +10,7 @@ using MediaBrowser.Controller.Streaming;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 
 namespace Jellyfin.Plugin.DoViRemux;
 
@@ -142,7 +143,7 @@ public class RemuxLibraryTask(IItemRepository _itemRepo,
         if (doviStream?.DvProfile is null) return false;
         if (doviStream.DvBlSignalCompatibilityId != 1) return false;
         if (doviStream.DvProfile != 8) return false;
-        if (doviStream.BlPresentFlag != 1 )return false;
+        if (doviStream.BlPresentFlag != 1) return false;
         return true;
     }
 
@@ -202,21 +203,18 @@ public class RemuxLibraryTask(IItemRepository _itemRepo,
             return;
         }
         var inputPath = source.Path;
-        var tempOutputPath = Path.Combine(_paths.TempDirectory, Path.GetFileNameWithoutExtension(inputPath) + "_hdr10.mp4");
+        var tempDir = _paths.TempDirectory;
+        var baseName = Path.GetFileNameWithoutExtension(inputPath);
 
-        // Use zscale for HDR10 conversion (compatible with ffmpeg-jellyfin)
-        var ffmpegArgs = $"-nostdin -loglevel error -stats -y -i \"{inputPath}\" " +
-            "-vf \"zscale=transfer=bt2020-10:primaries=bt2020:matrix=bt2020nc,format=yuv420p10le\" " +
-            "-c:v libx265 -map_chapters -1 -an -sn -b:v 12000k " +
-            "-x265-params \"repeat-headers=1:sar=1:hrd=1:aud=1:open-gop=0:hdr10=1:sao=0:rect=0:cutree=0:deblock=-3-3:strong-intra-smoothing=0:chromaloc=2:aq-mode=1:vbv-maxrate=160000:vbv-bufsize=160000:max-luma=1023:max-cll=0,0:master-display=G(8500,39850)B(6550,23000)R(35400,15650)WP(15635,16450)L(10000000,1)WP(15635,16450)L(1000000,100%):preset=slow\" " +
-            $"\"{tempOutputPath}\"";
+        var tempHevcPath = Path.Combine(tempDir, $"{baseName}_hdr10.hevc");
+        var tempOutputPath = Path.Combine(tempDir, $"{baseName}_hdr10.mkv");
 
-        var process = new System.Diagnostics.Process
+        // 1. ffmpeg process: outputs HEVC stream to stdout
+        using var ffmpeg = new System.Diagnostics.Process
         {
-            StartInfo = new System.Diagnostics.ProcessStartInfo
+            StartInfo = new System.Diagnostics.ProcessStartInfo(_mediaEncoder.EncoderPath)
             {
-                FileName = _mediaEncoder.EncoderPath,
-                Arguments = ffmpegArgs,
+                Arguments = $"-nostdin -loglevel error -y -i \"{inputPath}\" -map 0:v:0 -c copy -bsf:v hevc_mp4toannexb -f hevc -",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -224,20 +222,121 @@ public class RemuxLibraryTask(IItemRepository _itemRepo,
             }
         };
 
-        _logger.LogInformation("Converting DV8 to HDR10: {Command} {Arguments}", process.StartInfo.FileName, process.StartInfo.Arguments);
-
-        process.Start();
-        string stdOut = await process.StandardOutput.ReadToEndAsync();
-        string stdErr = await process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync(cancellationToken);
-
-        if (process.ExitCode != 0)
+        // 2. dovi_tool process: reads from stdin, writes to output file
+        using var doviTool = new System.Diagnostics.Process
         {
-            _logger.LogError("ffmpeg HDR10 conversion failed: {Error}", stdErr);
-            throw new Exception("ffmpeg HDR10 conversion failed: " + stdErr);
+            StartInfo = new System.Diagnostics.ProcessStartInfo(configuration.PathToDoviTool)
+            {
+                Arguments = $"remove -i - -o \"{tempHevcPath}\"",
+                RedirectStandardInput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+
+        _logger.LogInformation("Extracting video stream and converting to HDR10: {FfmpegCmd} | {DoviToolCmd}", ffmpeg.StartInfo.Arguments, doviTool.StartInfo.Arguments);
+
+        ffmpeg.Start();
+        doviTool.Start();
+
+        // Pipe ffmpeg stdout to dovi_tool stdin
+        await ffmpeg.StandardOutput.BaseStream.CopyToAsync(doviTool.StandardInput.BaseStream, cancellationToken);
+        ffmpeg.StandardOutput.Close();
+        doviTool.StandardInput.Close();
+        _ = WriteStreamToLog(Path.Combine(_paths.LogDirectoryPath, $"ffmpeg_hevc_{source.Id}_{Guid.NewGuid().ToString()[..8]}.log"),
+                             ffmpeg.StandardError.BaseStream, ffmpeg, cancellationToken)
+            .ConfigureAwait(false);
+
+        string ffmpegStdErr = await ffmpeg.StandardError.ReadToEndAsync();
+        string doviStdErr = await doviTool.StandardError.ReadToEndAsync();
+
+        await ffmpeg.WaitForExitAsync(cancellationToken);
+        await doviTool.WaitForExitAsync(cancellationToken);
+
+        if (ffmpeg.ExitCode != 0)
+        {
+            _logger.LogError("ffmpeg extraction failed: {Error}", ffmpegStdErr);
+            throw new Exception("ffmpeg extraction failed: " + ffmpegStdErr);
+        }
+        if (doviTool.ExitCode != 0)
+        {
+            _logger.LogError("dovi_tool remove failed: {Error}", doviStdErr);
+            throw new Exception("dovi_tool remove failed: " + doviStdErr);
+        }
+
+        // 3. Use mkvmerge to combine the original MKV's non-video streams with the new HDR10 video stream
+        var mkvmergeArgs = $"-o \"{tempOutputPath}\" --no-video \"{inputPath}\" \"{tempHevcPath}\"";
+        var mkvmergeProcess = new System.Diagnostics.Process
+        {
+            StartInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = configuration.PathTomkvmerge,
+                Arguments = mkvmergeArgs,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+        _logger.LogInformation("Merging HDR10 video with original streams: {Command} {Arguments}", mkvmergeProcess.StartInfo.FileName, mkvmergeProcess.StartInfo.Arguments);
+        mkvmergeProcess.Start();
+        string mkvmergeStdOut = await mkvmergeProcess.StandardOutput.ReadToEndAsync();
+        string mkvmergeStdErr = await mkvmergeProcess.StandardError.ReadToEndAsync();
+        await mkvmergeProcess.WaitForExitAsync(cancellationToken);
+        if (mkvmergeProcess.ExitCode != 0)
+        {
+            _logger.LogError("mkvmerge failed: {Error}", mkvmergeStdErr);
+            throw new Exception("mkvmerge failed: " + mkvmergeStdErr);
         }
 
         // Replace original file
         File.Move(tempOutputPath, inputPath, overwrite: true);
+
+        // Cleanup
+        File.Delete(tempHevcPath);
+    }
+    private async Task WriteStreamToLog(string logPath, Stream logStream, Process logProcess, CancellationToken token)
+    {
+        try
+        {
+            using var writer = new StreamWriter(File.Open(
+                logPath,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.Read));
+            using var reader = new StreamReader(logStream);
+
+            while (!token.IsCancellationRequested)
+            {
+                // Drain remaining lines even after process exits
+                if (reader.EndOfStream)
+                {
+                    if (logProcess.HasExited) break;
+                    // wait briefly for more output
+                    await Task.Delay(50, token).ConfigureAwait(false);
+                    continue;
+                }
+
+                var line = await reader.ReadLineAsync().ConfigureAwait(false);
+                if (line is null)
+                {
+                    if (logProcess.HasExited) break;
+                    await Task.Delay(50, token).ConfigureAwait(false);
+                    continue;
+                }
+
+                await writer.WriteLineAsync(line).ConfigureAwait(false);
+                await writer.FlushAsync().ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // expected on cancellation - do not treat as error
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "WriteStreamToLog failed for {LogPath}", logPath);
+        }
     }
 }
